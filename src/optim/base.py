@@ -13,9 +13,9 @@ from logger.logger import DynamicsLogger
 from .schedule import (update_weight_decay, wd_cosine_schedule,
                        wd_linear_schedule, wd_stable_decay_schedule,
                        wd_wsd_schedule)
-from .utils import (eval, get_batch, get_parameter_norms, load_checkpoint,
-                    load_worker_state, log_prodigy_lr, save_checkpoint,
-                    save_worker_state, visualize_routing)
+from .utils import (eval, get_batch, get_parameter_norms,
+                    load_checkpoint, load_worker_state, log_prodigy_lr,
+                    save_checkpoint, save_worker_state, visualize_routing)
 
 
 def train(
@@ -219,6 +219,14 @@ def train(
 
         dt = (time.perf_counter_ns() - t_start) / 1e9
 
+        ws = distributed_backend.get_world_size()
+        tokens = ws * substep * cfg.sequence_length * cfg.batch_size
+        tokens_this_step = ws * cfg.acc_steps * cfg.sequence_length * cfg.batch_size
+        tok_per_sec_per_gpu = tokens_this_step/dt/ws
+
+        remaining_iters = cfg.iterations - curr_iter
+        eta = remaining_iters*dt
+
         curr_iter += 1
 
         if (
@@ -239,7 +247,8 @@ def train(
             print(
                 f"Train: Iter={curr_iter} ({epoch:0.3f} epochs) "
                 f"train_loss={train_loss:.3f} iter_dt={dt:.2e}s "
-                f"lr={current_lrs[0]:.2e}"
+                f"lr={current_lrs[0]:.2e} t/s/g={tok_per_sec_per_gpu:.1f} "
+                f"ETA={int(eta/60/60)}h{int(eta/60) % 60}m"
             )
             if cfg.opt == "prodigy":
                 print(f"effective_lr={prodigy_efective_lrs[0]:.2e}")
@@ -256,6 +265,7 @@ def train(
                     "mean_grad_norm": (
                         torch.tensor(grad_norms).mean().item() if grad_norms else 0
                     ),
+                    "tokens_per_sec_per_gpu": tok_per_sec_per_gpu,
                     **train_aux_losses,
                 }
 
