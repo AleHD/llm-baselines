@@ -5,6 +5,7 @@ import json
 import os
 import random
 import sys
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,9 @@ from optim.clipped import (AdagradClip, AdaGradClipDelayedEta, AdamClip,
 from optim.lamb import Lamb
 from optim.lion import Lion
 from optim.mars import MARS
+from optim.mixamix import MixAMix
 from optim.muon import CombinedScheduler, DistributedMuon, Muon
+from optim.muonmix import MuonMix
 from optim.normalized import NormalizedSGD
 from optim.prodigy import Prodigy
 from optim.schedule import (cos_inf_schedule, cosine_wsd_decay_schedule,
@@ -79,7 +82,15 @@ def main(args, parser):
     # torch.use_deterministic_algorithms(True)  # CUBLAS_WORKSPACE_CONFIG=:4096:8
 
     exp_name = get_exp_name(args, parser, distributed_backend)
-    exp_dir = Path(args.results_base_folder) / exp_name
+    if len(exp_name) > 255:
+        h = hashlib.new("sha256")
+        h.update(exp_name.encode())
+        exp_dir = Path(args.results_base_folder) / h.hexdigest()
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        with open(exp_dir/"exp_name.txt", "w+") as f:
+            print(exp_name, file=f)
+    else:
+        exp_dir = Path(args.results_base_folder) / exp_name
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(
             project=args.wandb_project,
@@ -214,6 +225,28 @@ def main(args, parser):
                 adamw_eps=1e-8,
                 adamw_wd=args.weight_decay,
             )
+    elif args.opt == "muonmix":
+        param_list = (
+            list(model.parameters())
+            if args.distributed_backend is None
+            else list(model.module.parameters())
+        )
+        opt = MuonMix(
+            muon_params=param_list,
+            lr=args.muon_lr_factor,
+            momentum1=args.momentum,
+            momentum2=args.momentum2,
+            nesterov=args.nesterov,
+            ns_steps=args.muon_ns_steps,
+            adema_params=None,
+            adema_lr=args.lr,
+            adema_betas=(args.beta1, args.beta2, args.adema_beta3),
+            adema_eps=1e-8,
+            adema_wd=args.weight_decay,
+            adema_alpha=args.adema_alpha,
+            beta3_warmup=args.adema_beta3_warmup,
+            alpha_warmup=args.adema_alpha_warmup,
+        )
     elif args.opt == "d-muon":
         if args.cautious:
             raise NotImplementedError(
@@ -251,6 +284,20 @@ def main(args, parser):
                 alpha_warmup=args.adema_alpha_warmup,
                 weight_decay=args.weight_decay,
             )
+    elif args.opt == "mixamix":
+        opt = MixAMix(
+            group_specs,
+            lr=args.lr,
+            betas=tuple(args.mixamix_betas),
+            alphas=tuple(args.mixamix_alphas),
+            delta=args.mixamix_delta,
+            beta_warmups=tuple(args.mixamix_beta_warmups),
+            alpha_warmups=tuple(args.mixamix_alpha_warmups),
+            eps=1e-8,
+            weight_decay=args.weight_decay,
+            bias_correction=args.mixamix_bias_correction,
+        )
+
     elif args.opt == "adoptademamix":
         opt = ADOPTAdEMAMix(
             group_specs,
@@ -590,7 +637,7 @@ def main(args, parser):
                     div_factor=1e2,
                     final_div_factor=args.final_div_factor,
                 )
-                if args.opt != "muon"
+                if args.opt not in {"muon", "muonmix"}
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "cos_inf":
@@ -603,7 +650,7 @@ def main(args, parser):
             )
             scheduler = (
                 torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-                if args.opt != "muon"
+                if args.opt not in {"muon", "muonmix"}
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "wsd":
@@ -617,7 +664,7 @@ def main(args, parser):
             )
             scheduler = (
                 torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-                if args.opt != "muon"
+                if args.opt not in {"muon", "muonmix"}
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "cos_wsd":
@@ -716,6 +763,7 @@ def get_exp_name(
     distributed_backend,
     key_args=["model", "dataset", "opt"],
     ignore_args=[
+        "log_interval",
         "eval_interval",
         "full_eval_at",
         "distributed_backend",
@@ -736,6 +784,7 @@ def get_exp_name(
         "adema_beta3_warmup",
         "adema_alpha_warmup",
         "plot_router_logits",
+        "datasets_dir",
     ],
 ):
     # Get the default values

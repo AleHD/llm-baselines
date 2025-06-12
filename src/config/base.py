@@ -92,8 +92,10 @@ def parse_args(base_parser, args, namespace):
             "adamw",
             "sgd",
             "muon",
+            "muonmix",
             "soap",
             "ademamix",
+            "mixamix",
             "adoptademamix",
             "lion",
             "sf-adamw",
@@ -144,6 +146,16 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--adema_alpha", default=2.0, type=float)
     parser.add_argument("--adema_beta3_warmup", default=None, type=int)
     parser.add_argument("--adema_alpha_warmup", default=None, type=int)
+    # MuonMix:
+    parser.add_argument("--momentum2", default=0.9999, type=float)
+    # MixAMix:
+    parser.add_argument("--mixamix_alphas", nargs="+", type=float)
+    parser.add_argument("--mixamix_betas", nargs="+", type=float)
+    parser.add_argument("--mixamix_delta", default=0.95, type=float)
+    parser.add_argument("--mixamix_alpha_warmups", nargs="+", type=int)
+    parser.add_argument("--mixamix_beta_warmups", nargs="+", type=int)
+    parser.add_argument("--mixamix_bias_correction", action="store_true")
+    # The rest:
     parser.add_argument("--schedulefree_r", default=0.0, type=float)
     parser.add_argument("--weight_lr_power", default=2.0, type=float)
     parser.add_argument("--model_sharding", default=None, type=bool)
